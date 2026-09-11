@@ -1,0 +1,73 @@
+name: Fedora Build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Must be >= the kdeplasma-addons version that first ships the Ion API (>= 6.5).
+  # Also used to derive the source tarball URL by cmake/PlasmaIonsChinaIonHeadersTarget.cmake.
+  # Keep it in sync with the version argument in the top-level CMakeLists.txt.
+  ION_HEADERS_VERSION: "6.6.4"
+
+jobs:
+  build:
+    name: Build on Fedora
+    runs-on: ubuntu-latest
+    # Fedora 44 or newer is required: CMakeLists.txt needs CMake 4.0 and the
+    # PlasmaWeather Ion API needs the headers shipped by kdeplasma-addons >= 6.5.
+    container: fedora:latest
+    steps:
+      - name: Install build dependencies
+        run: |
+          # qt6-qtbase-devel provides the *runtime* Qt6 libs needed to link, because
+          # Fedora splits headers into -devel packages.
+          # libsodium-devel is only needed by the qweather ion.
+          dnf --assumeyes --setopt=install_weak_deps=False install \
+            cmake \
+            extra-cmake-modules \
+            gcc-c++ \
+            git \
+            gettext \
+            ninja-build \
+            qt6-qtbase-devel \
+            kf6-kcoreaddons-devel \
+            kf6-ki18n-devel \
+            kf6-kunitconversion-devel \
+            kdeplasma-addons-devel \
+            libsodium-devel
+
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: |
+          # PLASMA_IONS_CHINA_VERSION is passed explicitly on purpose: without a
+          # valid `vX.Y.Z` git tag the top-level CMakeLists.txt aborts configuration,
+          # and this repository has no tags at all.
+          cmake -B build -S . \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPLASMA_IONS_CHINA_VERSION="${ION_HEADERS_VERSION}" \
+            -DPLASMA_IONS_CHINA_ENABLE_MODERN=ON \
+            -DPLASMA_IONS_CHINA_ENABLE_LEGACY=OFF
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Install
+        run: cmake --install build
+
+      # qweather has no credentials here and is skipped by upstream design,
+      # so only nmccn is asserted.
+      - name: Verify installed ion
+        run: |
+          ion="$(find /usr -name 'nmccn.so' 2>/dev/null | head -n1)"
+          test -n "$ion" || { echo "::error::nmccn.so was not installed"; exit 1; }
+          echo "Installed: $ion"
