@@ -103,3 +103,57 @@ jobs:
           ion="$(find /usr -name 'nmccn.so' 2>/dev/null | head -n1)"
           test -n "$ion" || { echo "::error::nmccn.so was not installed"; exit 1; }
           echo "Installed: $ion"
+
+  package:
+    name: Build RPM
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Install packaging tools
+        run: dnf --assumeyes install rpm-build dnf-plugins-core gzip
+
+      - uses: actions/checkout@v4
+
+      - name: Prepare source archive
+        run: |
+          # Source0 points at a vX.Y.Z tag that does not exist yet, so the archive is
+          # built from the checkout instead. This also means no version tag has to
+          # exist for the package job to run.
+          mkdir -p rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+          version="$(sed -n 's/^%global ion_headers_version //p' plasma-ions-china.spec)"
+          test -n "$version" || { echo "::error::cannot read version from spec"; exit 1; }
+          git archive --format=tar.gz \
+            --prefix="plasma-ions-china-v${version}/" \
+            -o "rpmbuild/SOURCES/plasma-ions-china-v${version}.tar.gz" HEAD
+          cp plasma-ions-china.spec rpmbuild/SPECS/
+
+      - name: Install BuildRequires from spec
+        run: |
+          # The spec is the single source of truth for build dependencies, so the
+          # list is resolved here instead of being duplicated in this workflow.
+          dnf builddep --assumeyes -y rpmbuild/SPECS/plasma-ions-china.spec
+
+      - name: Build RPM
+        run: >-
+          rpmbuild -bb rpmbuild/SPECS/plasma-ions-china.spec
+          --define "_rpmdir $PWD/rpmbuild/RPMS"
+          --define "_sourcedir $PWD/rpmbuild/SOURCES"
+          --define "_specdir $PWD/rpmbuild/SPECS"
+          --define "_builddir $PWD/rpmbuild/BUILD"
+          --define "_buildrootdir $PWD/rpmbuild/BUILDROOT"
+          --define "_srcrpmdir $PWD/rpmbuild/SRPMS"
+          --define "_topdir $PWD/rpmbuild"
+
+      - name: Show produced package
+        run: |
+          mapfile -t rpms < <(find rpmbuild/RPMS -name '*.rpm')
+          test "${#rpms[@]}" -gt 0 || { echo "::error::no RPM was produced"; exit 1; }
+          rpm -qip "${rpms[0]}"
+          rpm -qlp "${rpms[0]}"
+
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: rpmbuild/RPMS/**/*.rpm
+          if-no-files-found: error
