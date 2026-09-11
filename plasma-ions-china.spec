@@ -82,5 +82,12 @@ weather data from the National Meteorological Center of China.
 %files
 %license LICENSE.txt
 %doc README.md
-%{_datadir}/plasma/weather_ions/
-%{_libdir}/plugins/plasma/weather/n*ccn.so
+# Modern ions are Qt plugins installed by kcoreaddons_add_plugin under the Qt6
+# plugin prefix; this is not the legacy plasma5support location.
+%{_qt6_plugindir}/plasma/weather_ions/
+# Translations installed by ki18n_install(po).
+%{_datadir}/locale/*/LC_MESSAGES/plasma_ions_china.mo
+
+%changelog
+* Wed Sep 11 2026 red-blakTree <red-blakTree@users.noreply.github.com> - 6.6.4-1
+- Initial package for the GitHub Actions build
