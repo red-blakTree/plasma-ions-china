@@ -27,8 +27,9 @@ jobs:
     steps:
       - name: Install build dependencies
         run: |
-          # qt6-qtbase-devel provides the *runtime* Qt6 libs needed to link, because
-          # Fedora splits headers into -devel packages.
+          # Qt6/KF6 headers come from -devel packages, because Fedora splits them out.
+          # qml and holidays are not used directly: they are pulled in through
+          # find_dependency() in PlasmaWeatherConfig.cmake and must be present.
           # libsodium-devel is only needed by the qweather ion.
           dnf --assumeyes --setopt=install_weak_deps=False install \
             cmake \
@@ -38,6 +39,8 @@ jobs:
             gettext \
             ninja-build \
             qt6-qtbase-devel \
+            qt6-qtdeclarative-devel \
+            kf6-kholidays-devel \
             kf6-kcoreaddons-devel \
             kf6-ki18n-devel \
             kf6-kunitconversion-devel \
