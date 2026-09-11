@@ -106,6 +106,9 @@ jobs:
 
   package:
     name: Build RPM
+    # Serialised on purpose: packaging only starts once the build job has finished
+    # successfully, so the two jobs never run at the same time.
+    needs: build
     runs-on: ubuntu-latest
     container: fedora:latest
     steps:
