@@ -110,7 +110,7 @@ jobs:
     container: fedora:latest
     steps:
       - name: Install packaging tools
-        run: dnf --assumeyes install rpm-build dnf-plugins-core gzip
+        run: dnf --assumeyes install rpm-build dnf-plugins-core gzip git
 
       - uses: actions/checkout@v4
 
@@ -119,9 +119,16 @@ jobs:
           # Source0 points at a vX.Y.Z tag that does not exist yet, so the archive is
           # built from the checkout instead. This also means no version tag has to
           # exist for the package job to run.
+          # git is installed above: actions/checkout runs on the runner, not in this
+          # container, so git is not available here unless asked for explicitly.
+          set -euxo pipefail
+          cd "$GITHUB_WORKSPACE"
           mkdir -p rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
           version="$(sed -n 's/^%global ion_headers_version //p' plasma-ions-china.spec)"
           test -n "$version" || { echo "::error::cannot read version from spec"; exit 1; }
+          # It is not enough to check out: the tree must be a real repository, so
+          # verify that before using git archive.
+          git rev-parse --is-inside-work-tree
           git archive --format=tar.gz \
             --prefix="plasma-ions-china-v${version}/" \
             -o "rpmbuild/SOURCES/plasma-ions-china-v${version}.tar.gz" HEAD
