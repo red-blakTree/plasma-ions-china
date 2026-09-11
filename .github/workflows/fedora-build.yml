@@ -126,6 +126,14 @@ jobs:
           # for its BuildRequires, which are resolved below instead of being
           # duplicated in this workflow.
           set -o pipefail
+          # Locate the repository root explicitly rather than trusting the current
+          # working directory: a bare `git archive` here once failed with
+          # "not a git repository".
+          echo "cwd=$(pwd) workspace=${GITHUB_WORKSPACE:-unset}"
+          cd "${GITHUB_WORKSPACE:-$(pwd)}"
+          repo_root="$(git rev-parse --show-toplevel)"
+          echo "repo_root=$repo_root"
+          cd "$repo_root"
           mkdir -p rpmbuild/BUILD rpmbuild/BUILDROOT rpmbuild/RPMS \
                    rpmbuild/SOURCES rpmbuild/SPECS rpmbuild/SRPMS
           version="$(sed -n 's/^%global ion_headers_version //p' plasma-ions-china.spec)"
