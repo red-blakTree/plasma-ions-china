@@ -59,8 +59,9 @@ This package provides the modern (KDE >= 6.5) ion plugin nmccn, which fetches
 weather data from the National Meteorological Center of China.
 
 %prep
-# git archive adds no pax_global_header line, so the default -p1 strip of %setup
-# already lands on the expected directory.
+# The archive may come from git archive or from a plain `tar` of the checkout
+# plus --transform; both put every file under ./%{project}-v%{version}/, so the
+# default -p1 strip of %setup lands on the expected directory.
 %autosetup -n %{project}-v%{version}
 
 %build

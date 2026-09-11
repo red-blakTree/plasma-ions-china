@@ -83,14 +83,6 @@ jobs:
             kdeplasma-addons-devel \
             libsodium-devel
 
-      - name: Trust the workspace for git
-        run: |
-          # The container runs as root while the workspace is owned by the runner
-          # user, so git refuses to touch it with "detected dubious ownership"
-          # (exit code 128). This must come after git is installed above and before
-          # the first git command in this job, which is the archive in Build RPM.
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
       - name: Install RPM tooling
         run: |
           # gh is used to publish the release on manual runs.
@@ -126,23 +118,26 @@ jobs:
           # for its BuildRequires, which are resolved below instead of being
           # duplicated in this workflow.
           set -o pipefail
-          # Locate the repository root explicitly rather than trusting the current
-          # working directory: a bare `git archive` here once failed with
-          # "not a git repository".
-          echo "cwd=$(pwd) workspace=${GITHUB_WORKSPACE:-unset}"
+          # git cannot be relied on here: in this container layout the workspace
+          # is not a repository ("not a git repository" even though cwd equals
+          # GITHUB_WORKSPACE), so the source archive is packed directly with tar.
+          echo "cwd=$(pwd)"
           cd "${GITHUB_WORKSPACE:-$(pwd)}"
-          repo_root="$(git rev-parse --show-toplevel)"
-          echo "repo_root=$repo_root"
-          cd "$repo_root"
           mkdir -p rpmbuild/BUILD rpmbuild/BUILDROOT rpmbuild/RPMS \
                    rpmbuild/SOURCES rpmbuild/SPECS rpmbuild/SRPMS
           version="$(sed -n 's/^%global ion_headers_version //p' plasma-ions-china.spec)"
           test -n "$version" || { echo "::error::cannot read version from spec"; exit 1; }
-          # Source0 points at a vX.Y.Z tag, but packaging must not depend on one
-          # existing, so the archive is generated from the checkout instead.
-          git archive --format=tar.gz \
-            --prefix="plasma-ions-china-v${version}/" \
-            -o "rpmbuild/SOURCES/plasma-ions-china-v${version}.tar.gz" HEAD
+          # Source0 points at a GitHub tag tarball, but packaging must not depend on
+          # a tag existing, so the archive is generated from the checkout instead.
+          # --transform gives every entry a single versioned top-level directory,
+          # which is what the spec's %autosetup -p1 expects to strip off.
+          tar czf "rpmbuild/SOURCES/plasma-ions-china-v${version}.tar.gz" \
+            --transform="s,^\\./,plasma-ions-china-v${version}/," \
+            --exclude='./.git' \
+            --exclude='./build' \
+            --exclude='./rpmbuild' \
+            --exclude='./.cache' \
+            .
           cp plasma-ions-china.spec rpmbuild/SPECS/
           dnf builddep --assumeyes -y rpmbuild/SPECS/plasma-ions-china.spec
           rpmbuild -bb rpmbuild/SPECS/plasma-ions-china.spec \
