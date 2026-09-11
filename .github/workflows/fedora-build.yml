@@ -5,11 +5,16 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  # Manual runs also publish the RPM to GitHub Releases.
   workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+# Required to create the tag and the release on a manual run.
+permissions:
+  contents: write
 
 env:
   # Must be >= the kdeplasma-addons version that first ships the Ion API (>= 6.5).
@@ -18,13 +23,23 @@ env:
   ION_HEADERS_VERSION: "6.6.4"
 
 jobs:
-  build:
+  fedora:
     name: Build on Fedora
     runs-on: ubuntu-latest
     # Fedora 44 or newer is required: CMakeLists.txt needs CMake 4.0 and the
     # PlasmaWeather Ion API needs the headers shipped by kdeplasma-addons >= 6.5.
     container: fedora:latest
     steps:
+      - name: Trust the workspace for git
+        run: |
+          # The container runs as root while the workspace is owned by the runner
+          # user, so git refuses to touch it with "detected dubious ownership"
+          # (exit code 128). Registered before the checkout so that every later
+          # git command, including the ones run by rpmbuild, is covered.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - uses: actions/checkout@v4
+
       - name: Install build dependencies
         run: |
           # ion_headers externally configures the whole kdeplasma-addons, so its full
@@ -76,7 +91,10 @@ jobs:
             kdeplasma-addons-devel \
             libsodium-devel
 
-      - uses: actions/checkout@v4
+      - name: Install RPM tooling
+        run: |
+          # gh is used to publish the release on manual runs.
+          dnf --assumeyes install rpm-build dnf-plugins-core gh
 
       - name: Configure
         run: |
@@ -93,69 +111,32 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      - name: Install
-        run: cmake --install build
-
       # qweather has no credentials here and is skipped by upstream design,
-      # so only nmccn is asserted.
-      - name: Verify installed ion
+      # so only nmccn is asserted. The RPM builds into its own directory, so
+      # this is checked in the plain build tree instead.
+      - name: Verify built ion
         run: |
-          ion="$(find /usr -name 'nmccn.so' 2>/dev/null | head -n1)"
-          test -n "$ion" || { echo "::error::nmccn.so was not installed"; exit 1; }
-          echo "Installed: $ion"
+          ion="$(find build -name 'nmccn.so' | head -n1)"
+          test -n "$ion" || { echo "::error::nmccn.so was not built"; exit 1; }
+          echo "Built: $ion"
 
-  package:
-    name: Build RPM
-    # Serialised on purpose: packaging only starts once the build job has finished
-    # successfully, so the two jobs never run at the same time.
-    needs: build
-    runs-on: ubuntu-latest
-    container: fedora:latest
-    steps:
-      - name: Install packaging tools
-        run: dnf --assumeyes install rpm-build dnf-plugins-core gzip git
-      - uses: actions/checkout@v4
-
-      - name: Trust the workspace for git
+      - name: Build RPM
         run: |
-          # The container runs as root while the workspace is owned by the runner
-          # user, so git refuses to touch it with "detected dubious ownership"
-          # (exit code 128).
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Prepare source archive
-        id: prep
-        continue-on-error: true
-        run: |
-          # Source0 points at a vX.Y.Z tag that does not exist yet, so the archive
-          # is built from the checkout instead. No version tag has to exist.
-          # git was installed above and is only needed for this step.
-          set -euxo pipefail
-          cd "$GITHUB_WORKSPACE"
+          # The spec is the single source of truth for the package metadata and
+          # for its BuildRequires, which are resolved below instead of being
+          # duplicated in this workflow.
+          set -o pipefail
           mkdir -p rpmbuild/BUILD rpmbuild/BUILDROOT rpmbuild/RPMS \
                    rpmbuild/SOURCES rpmbuild/SPECS rpmbuild/SRPMS
           version="$(sed -n 's/^%global ion_headers_version //p' plasma-ions-china.spec)"
           test -n "$version" || { echo "::error::cannot read version from spec"; exit 1; }
-          git rev-parse --is-inside-work-tree
+          # Source0 points at a vX.Y.Z tag, but packaging must not depend on one
+          # existing, so the archive is generated from the checkout instead.
           git archive --format=tar.gz \
             --prefix="plasma-ions-china-v${version}/" \
             -o "rpmbuild/SOURCES/plasma-ions-china-v${version}.tar.gz" HEAD
           cp plasma-ions-china.spec rpmbuild/SPECS/
-          # Later steps append their output here so that one artifact carries the
-          # whole story, since job logs cannot be fetched without admin rights.
-          { echo "prep_outcome=${{ steps.prep.outcome }}"; echo "workspace=$GITHUB_WORKSPACE"; \
-            echo "### git"; git rev-parse HEAD; echo "### files"; ls -la; ls -laR rpmbuild; \
-          } > prep-diagnostics.txt 2>&1 || true
-      - name: Install BuildRequires from spec
-        run: |
-          # The spec is the single source of truth for build dependencies, so the
-          # list is resolved here instead of being duplicated in this workflow.
-          dnf builddep --assumeyes -y rpmbuild/SPECS/plasma-ions-china.spec \
-            2>&1 | tee -a prep-diagnostics.txt
-
-      - name: Build RPM
-        run: |
-          set -o pipefail
+          dnf builddep --assumeyes -y rpmbuild/SPECS/plasma-ions-china.spec
           rpmbuild -bb rpmbuild/SPECS/plasma-ions-china.spec \
             --define "_rpmdir $PWD/rpmbuild/RPMS" \
             --define "_sourcedir $PWD/rpmbuild/SOURCES" \
@@ -163,15 +144,8 @@ jobs:
             --define "_builddir $PWD/rpmbuild/BUILD" \
             --define "_buildrootdir $PWD/rpmbuild/BUILDROOT" \
             --define "_srcrpmdir $PWD/rpmbuild/SRPMS" \
-            --define "_topdir $PWD/rpmbuild" \
-            2>&1 | tee -a prep-diagnostics.txt
-
-      - name: Show produced package
-        run: |
-          mapfile -t rpms < <(find rpmbuild/RPMS -name '*.rpm')
-          test "${#rpms[@]}" -gt 0 || { echo "::error::no RPM was produced"; exit 1; }
-          rpm -qip "${rpms[0]}"
-          rpm -qlp "${rpms[0]}"
+            --define "_topdir $PWD/rpmbuild"
+          find rpmbuild/RPMS -name '*.rpm' -exec rpm -qip {} \;
 
       - name: Upload RPM artifact
         uses: actions/upload-artifact@v4
@@ -180,27 +154,20 @@ jobs:
           path: rpmbuild/RPMS/**/*.rpm
           if-no-files-found: error
 
-      # Runs last so the artifact also contains the builddep and rpmbuild output
-      # appended by the steps above; the job log itself cannot be fetched without
-      # admin rights, so this file is the debugging channel.
-      - name: Collect diagnostics
-        if: always()
+      - name: Publish release
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          {
-            echo; echo "### final state"
-            echo "prep_outcome=${{ steps.prep.outcome }}"
-            echo "pwd=$(pwd)"
-            ls -la
-            find rpmbuild -name '*.rpm' 2>/dev/null
-            echo; echo "### diagnostics file (tail)"
-            tail -n 60 prep-diagnostics.txt 2>/dev/null || echo "no diagnostics file"
-          } >> prep-diagnostics.txt 2>&1 || true
-          tail -n 80 prep-diagnostics.txt
-
-      - name: Upload diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: prep-diagnostics
-          path: prep-diagnostics.txt
-          if-no-files-found: warn
+          version="$(sed -n 's/^%global ion_headers_version //p' plasma-ions-china.spec)"
+          test -n "$version" || { echo "::error::cannot read version from spec"; exit 1; }
+          echo "Publishing v${version}"
+          mapfile -t rpms < <(find rpmbuild/RPMS -name '*.rpm')
+          test "${#rpms[@]}" -gt 0 || { echo "::error::no RPM to publish"; exit 1; }
+          if gh release view "v${version}" >/dev/null 2>&1; then
+            gh release upload "v${version}" "${rpms[@]}" --clobber
+          else
+            gh release create "v${version}" "${rpms[@]}" \
+              --title "v${version}" \
+              --generate-notes
+          fi
