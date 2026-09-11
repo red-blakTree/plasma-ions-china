@@ -59,10 +59,11 @@ This package provides the modern (KDE >= 6.5) ion plugin nmccn, which fetches
 weather data from the National Meteorological Center of China.
 
 %prep
-# The archive may come from git archive or from a plain `tar` of the checkout
-# plus --transform; both put every file under ./%{project}-v%{version}/, so the
-# default -p1 strip of %setup lands on the expected directory.
-%autosetup -n %{project}-v%{version}
+# The archive is a plain `tar` of the checkout with --transform, so every file
+# sits under ./%{name}-%{version}/. That is exactly the directory %setup looks
+# for by default, so -p1 + no -n is enough. Note that passing -n here did not
+# take effect on this rpm, hence the archive is named to match the default.
+%autosetup
 
 %build
 # PLASMA_IONS_CHINA_VERSION is passed explicitly because the top-level

@@ -132,7 +132,7 @@ jobs:
           # --transform gives every entry a single versioned top-level directory,
           # which is what the spec's %autosetup -p1 expects to strip off.
           tar czf "rpmbuild/SOURCES/plasma-ions-china-v${version}.tar.gz" \
-            --transform="s,^\\./,plasma-ions-china-v${version}/," \
+            --transform="s,^\\./,plasma-ions-china-${version}/," \
             --exclude='./.git' \
             --exclude='./build' \
             --exclude='./rpmbuild' \
