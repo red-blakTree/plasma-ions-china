@@ -30,14 +30,6 @@ jobs:
     # PlasmaWeather Ion API needs the headers shipped by kdeplasma-addons >= 6.5.
     container: fedora:latest
     steps:
-      - name: Trust the workspace for git
-        run: |
-          # The container runs as root while the workspace is owned by the runner
-          # user, so git refuses to touch it with "detected dubious ownership"
-          # (exit code 128). Registered before the checkout so that every later
-          # git command, including the ones run by rpmbuild, is covered.
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
       - uses: actions/checkout@v4
 
       - name: Install build dependencies
@@ -90,6 +82,14 @@ jobs:
             kf6-sonnet-devel \
             kdeplasma-addons-devel \
             libsodium-devel
+
+      - name: Trust the workspace for git
+        run: |
+          # The container runs as root while the workspace is owned by the runner
+          # user, so git refuses to touch it with "detected dubious ownership"
+          # (exit code 128). This must come after git is installed above and before
+          # the first git command in this job, which is the archive in Build RPM.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Install RPM tooling
         run: |
